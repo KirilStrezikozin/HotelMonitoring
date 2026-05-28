@@ -67,33 +67,20 @@ class MultiCameraTracker:
     def run(self) -> None:
         """Run multi-camera tracking in parallel threads."""
         try:
-            for cam_name, camera in self.cameras.items():
-                t = threading.Thread(
-                    target=self._process_camera_loop, args=(cam_name, camera)
-                )
-                t.start()
-                self.threads.append(t)
-
             print("Starting frame processing across all cameras...")
-            self.start_event.set()
 
-            # Wait for all threads to finish
-            for t in self.threads:
-                t.join()
+            for cam_name, camera in self.cameras.items():
+                camera.start()
 
+            for cam_name, camera in self.cameras.items():
+                for thread in camera.threads:
+                    if thread.is_alive():
+                        thread.join()
+
+        except KeyboardInterrupt:
+            print("Interrupted by user. Shutting down...")
         finally:
             self._cleanup()
-
-    def _process_camera_loop(self, cam_name, camera):
-        """Process one camera in a loop inside a thread."""
-        self.start_event.wait()
-
-        while True:
-            frame = camera.process_next_frame()
-            if frame is None:
-                break
-            camera.write_frame(frame)
-        camera.cleanup()
 
     def _cleanup(self):
         for camera in self.cameras.values():

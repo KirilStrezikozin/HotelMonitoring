@@ -16,7 +16,7 @@ device = (
 class PersonDetector:
     """Wraps YOLO person detection."""
 
-    CONF_THRESHOLD = 0.1
+    CONF_THRESHOLD = 0.3
 
     def __init__(self, detector: YOLO):
         self.detector = detector
@@ -34,7 +34,7 @@ class PersonDetector:
         for box, cls, conf in zip(
             results[0].boxes.xyxy, results[0].boxes.cls, results[0].boxes.conf
         ):
-            if int(cls) != 0 or float(conf) < self.CONF_THRESHOLD:
+            if int(cls) != 1 or float(conf) < self.CONF_THRESHOLD:
                 continue
 
             x1, y1, x2, y2 = map(int, box)
