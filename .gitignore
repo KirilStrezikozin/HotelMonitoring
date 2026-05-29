@@ -218,3 +218,5 @@ yolo26n.mlpackage
 yolo26n*
 detect_roi.py
 settings.json
+
+.direnv/
