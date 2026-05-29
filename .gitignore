@@ -219,3 +219,5 @@ yolo26n*
 detect_roi.py
 settings.json
 *.txt
+
+.direnv/
