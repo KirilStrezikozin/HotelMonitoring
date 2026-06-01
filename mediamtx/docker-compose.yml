@@ -1,0 +1,38 @@
+---
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.13.0
+    container_name: mediamtx
+    ports:
+      - 8554:8554
+    volumes:
+      - ./resources/mediamtx.yml:/mediamtx.yml
+    networks:
+      - kate_hotel
+    restart: unless-stopped
+
+  # cam-12_38:
+  #   image: ffmpeg
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: cam-12_38
+  #   env_file:
+  #     - .env
+  #   ports:
+  #   #   - 80:80
+  #     - 8554:8554
+  #     # - 37777:37777
+  #   networks:
+  #     - kate_hotel
+  #   # gpus: all
+  #   # runtime: nvidia
+  #   command: ["/usr/local/bin/python", "main.py", "--in 'rtsp://admin:tEsTgfhjkm1729@10.0.0.21:554/cam/realmonitor?channel=1&subtype=1'", "--fps 30", "--mount '/yolo'", "--listen 0.0.0.0", "--port 8554", "--model yolov8n.pt", "--conf 0.4", "--iou 0.5"]
+  #   volumes:
+  #     - ./resources/fake-cam.py:/app/main.py
+  #   depends_on:
+  #     - mediamtx
+
+networks:
+  kate_hotel:
+    external: true
