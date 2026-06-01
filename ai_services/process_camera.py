@@ -3,7 +3,7 @@ import queue
 import threading
 import time
 import torch
-from ultralytics import YOLO
+import numpy as np
 
 from config.camera import CameraConfig
 from ai_services.reid import ReIDModel
@@ -23,11 +23,9 @@ device = (
 
 
 class CameraProcessor:
-    """Orchestrator that automatically adapts its pipeline behavior for MP4 vs RTSP."""
+    """Orchestrator using a 2-thread architecture for frame processing."""
 
-    def __init__(
-        self, config_camera: CameraConfig, detector: YOLO, reid_model: ReIDModel
-    ):
+    def __init__(self, config_camera: CameraConfig, detector, reid_model: ReIDModel):
         self.config = config_camera
         self.detector = PersonDetector(detector)
         self.reid_model = reid_model
@@ -58,9 +56,9 @@ class CameraProcessor:
 
         self.stop_event = threading.Event()
 
-        self.queue_capacity = 4
-        self.input_queue = queue.Queue(maxsize=self.queue_capacity)
-        self.output_queue = queue.Queue(maxsize=self.queue_capacity)
+        self.inference_queue = queue.Queue(maxsize=2)
+        self.result_queue = queue.Queue(maxsize=2)
+
         self.threads = []
 
         self.frame_count = 0
@@ -70,28 +68,40 @@ class CameraProcessor:
             else int(self.source.fps * config_camera.max_duration_seconds)
         )
 
+    def _warmup_models(self):
+        """Run dummy data through the models to ensure they're loaded and optimized before real processing starts."""
+        self.logger.info("Warming up AI models...")
+
+        dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        self.detector.detect(dummy_frame)
+
+        dummy_crop = np.zeros((256, 128, 3), dtype=np.uint8)
+        self.reid_model.extract_embedding(dummy_crop)
+
+        self.logger.info("Models warmed up successfully.")
+
     def _generate_output_filename(self) -> str:
         return f"output_osnet_x1_0_{self.config.camera_id}.mp4"
 
     def start(self):
-        self.logger.info("Starting processing pipeline.")
-        t_reader = threading.Thread(
-            target=self._reader_thread, name=f"Reader-{self.config.camera_id}"
+        self._warmup_models()
+        self.logger.info(
+            "Models are warmed up and ready. Starting processing pipeline."
         )
-        t_processor = threading.Thread(
-            target=self._processor_thread, name=f"Processor-{self.config.camera_id}"
+        t_main = threading.Thread(
+            target=self._main_thread, name=f"Main-{self.config.camera_id}"
         )
-        t_writer = threading.Thread(
-            target=self._writer_thread, name=f"Writer-{self.config.camera_id}"
+        t_inference = threading.Thread(
+            target=self._inference_thread, name=f"Inference-{self.config.camera_id}"
         )
 
-        self.threads.extend([t_reader, t_processor, t_writer])
+        self.threads.extend([t_main, t_inference])
         for t in self.threads:
             t.daemon = True
             t.start()
 
-    def _reader_thread(self):
-        """Thread 1: Reads frames. Blocks/paces for files; drops/evicts for streams."""
+    def _main_thread(self):
+        """Thread 1: Reads frames, routes 1/10 to inference, applies results, and writes."""
         # Calculate expected time per frame (e.g., 1 / 30.0 = 0.033s) -> Only used for MP4s
         frame_delay = (
             1.0 / self.source.fps
@@ -99,12 +109,18 @@ class CameraProcessor:
             else 0.0
         )
 
+        current_results = None
+
         while not self.stop_event.is_set():
             start_time = time.time()
 
             if not self.source.grab() or self.frame_count >= self.max_frames:
                 self.logger.info("Finished video file or RTSP stream disconnected.")
                 self.stop_event.set()
+                try:
+                    self.inference_queue.put_nowait((None, None))
+                except queue.Full:
+                    pass
                 break
 
             self.frame_count += 1
@@ -112,24 +128,33 @@ class CameraProcessor:
             if frame is None:
                 continue
 
-            if self.is_stream:
-                if self.input_queue.full():
+            frame = self.processor.preprocess(frame)
+
+            if self.frame_count % self.config.detection_interval == 0:
+                if self.inference_queue.full():
                     try:
-                        dropped_id, _ = self.input_queue.get_nowait()
-                        self.logger.debug(f"RTSP Lag: Dropped old frame {dropped_id}")
+                        self.inference_queue.get_nowait()
                     except queue.Empty:
                         pass
                 try:
-                    self.input_queue.put_nowait((self.frame_count, frame))
+                    self.inference_queue.put_nowait((self.frame_count, frame.copy()))
                 except queue.Full:
                     pass
-            else:
-                try:
-                    self.input_queue.put((self.frame_count, frame), timeout=2)
-                except queue.Full:
-                    self.logger.warning(
-                        "Pipeline severely stalled during MP4 playback."
-                    )
+
+            try:
+                while not self.result_queue.empty():
+                    current_results = self.result_queue.get_nowait()
+            except queue.Empty:
+                pass
+
+            if current_results is not None:
+                for person in current_results:
+                    l, t, r, b = person["bbox"]
+                    global_id = person["global_id"]
+                    self.processor.annotate(frame, l, t, r, b, str(global_id))
+                self.processor.draw_person_count(frame, len(current_results))
+
+            self.output.write(frame)
 
             if frame_delay > 0:
                 elapsed = time.time() - start_time
@@ -137,37 +162,22 @@ class CameraProcessor:
                 if time_to_sleep > 0:
                     time.sleep(time_to_sleep)
 
-        try:
-            self.input_queue.put((None, None), timeout=2)
-        except queue.Full:
-            pass
-
-    def _processor_thread(self):
-        """Thread 2: Processes frames and pushes them forward conditionally."""
+    def _inference_thread(self):
+        """Thread 2: Receives frames, runs detection + tracking + ReID, and sends results back."""
         while not self.stop_event.is_set():
             try:
-                frame_count, frame = self.input_queue.get(timeout=1)
+                frame_count, frame = self.inference_queue.get(timeout=1)
             except queue.Empty:
                 continue
 
             if frame is None:
-                try:
-                    self.output_queue.put(None, timeout=2)
-                except queue.Full:
-                    pass
                 break
 
-            frame = self.processor.preprocess(frame)
-
-            if frame_count % self.config.detection_interval == 0:
-                detections = self.detector.detect(frame)
-                if not detections or len(detections) == 0:
-                    self._push_to_output_queue(frame)
-                    continue
-            else:
+            detections = self.detector.detect(frame)
+            if not detections:
                 detections = []
 
-            self.tracker.update(
+            tracked_results = self.tracker.update(
                 frame,
                 detections,
                 self.reid_model,
@@ -176,38 +186,15 @@ class CameraProcessor:
                 self.config.camera_id,
             )
 
-            self._push_to_output_queue(frame)
-
-    def _push_to_output_queue(self, frame):
-        """Handles routing to the output/writer thread safely depending on mode."""
-        if self.is_stream:
-            if self.output_queue.full():
+            if self.result_queue.full():
                 try:
-                    self.output_queue.get_nowait()
+                    self.result_queue.get_nowait()
                 except queue.Empty:
                     pass
             try:
-                self.output_queue.put_nowait(frame)
+                self.result_queue.put_nowait(tracked_results)
             except queue.Full:
                 pass
-        else:
-            try:
-                self.output_queue.put(frame, timeout=2)
-            except queue.Full:
-                pass
-
-    def _writer_thread(self):
-        """Thread 3: Writes out or streams out frames."""
-        while not self.stop_event.is_set():
-            try:
-                frame = self.output_queue.get(timeout=1)
-            except queue.Empty:
-                continue
-
-            if frame is None:
-                break
-
-            self.output.write(frame)
 
     def cleanup(self):
         self.stop_event.set()

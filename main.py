@@ -2,6 +2,22 @@ import time
 
 from ai_services.multicamera import MultiCameraTracker
 from config.camera import CameraConfig
+import logging
+import torch
+import sys
+
+_original_load = torch.load
+torch.load = lambda *args, **kwargs: _original_load(
+    *args, **{**kwargs, "weights_only": False}
+)
+
+sys.modules["numpy._core"] = sys.modules["numpy.core"]
+sys.modules["numpy._core.multiarray"] = sys.modules["numpy.core.multiarray"]
+
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 
 
 def main():
