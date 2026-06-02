@@ -1,5 +1,6 @@
 from deep_sort_realtime.deepsort_tracker import DeepSort
 import numpy as np
+import time
 
 from config.tracking import TrackingConfig
 from ai_services.reid import ReIDModel
@@ -27,24 +28,29 @@ class TrackerManager:
         frame_count: int,
         detection_interval: int,
         camera_id: str,
-    ) -> list[dict]:
+    ) -> dict:
         """
         Update tracker and assign global IDs using ReID.
-        Returns a list of dictionaries containing bbox and global_id for drawing.
+        Returns a dict with render data and timing breakdown for tracking and ReID.
         """
+        tracking_start = time.time()
         tracks = self.tracker.update_tracks(detections, frame=frame)
-        used_gids: set[str] = set()
+        tracking_elapsed = time.time() - tracking_start
 
+        used_gids: set[str] = set()
         frame_h, frame_w = frame.shape[:2]
 
         render_data = []
+        reid_time = 0.0
 
         for track in tracks:
+            if not track.is_confirmed() or track.time_since_update > 1:
+                continue
+
             try:
                 local_id = track.track_id
                 l, t, r, b = map(int, track.to_ltrb())
 
-                # Clamp coordinates to the frame boundaries
                 l, t = max(0, l), max(0, t)
                 r, b = min(frame_w, r), min(frame_h, b)
 
@@ -61,6 +67,7 @@ class TrackerManager:
                 assigned_gid = current_gid
 
                 if frame_count % detection_interval == 0:
+                    reid_start = time.time()
                     embedding = reid_model.extract_embedding(crop)
                     assigned_gid = reid_model.assign_global_id(
                         embedding,
@@ -68,6 +75,8 @@ class TrackerManager:
                         current_gid,
                         active_ids=used_gids,
                     )
+                    reid_time += time.time() - reid_start
+
                     if assigned_gid in used_gids:
                         assigned_gid = reid_model._create_new_identity(
                             embedding, camera_id
@@ -86,4 +95,8 @@ class TrackerManager:
                 print(f"Tracking error: {e}")
                 continue
 
-        return render_data
+        return {
+            "render_data": render_data,
+            "tracking_time": tracking_elapsed,
+            "reid_time": reid_time,
+        }

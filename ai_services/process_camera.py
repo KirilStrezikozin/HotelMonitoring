@@ -63,6 +63,12 @@ class CameraProcessor:
         self.threads = []
 
         self.frame_count = 0
+        self.inference_count = 0
+        self.total_inference_time = 0.0
+        self.total_detection_time = 0.0
+        self.total_tracking_time = 0.0
+        self.total_reid_time = 0.0
+
         self.max_frames = (
             float("inf")
             if self.is_stream
@@ -103,14 +109,13 @@ class CameraProcessor:
 
     def _main_thread(self):
         """Thread 1: Reads frames, routes 1/10 to inference, applies results, and writes."""
-        # Calculate expected time per frame (e.g., 1 / 30.0 = 0.033s) -> Only used for MP4s
         frame_delay = (
             1.0 / self.source.fps
             if (self.source.fps > 0 and not self.is_stream)
             else 0.0
         )
 
-        current_results = None
+        persistent_results = []
 
         while not self.stop_event.is_set():
             start_time = time.time()
@@ -144,16 +149,18 @@ class CameraProcessor:
 
             try:
                 while not self.result_queue.empty():
-                    current_results = self.result_queue.get_nowait()
+                    persistent_results = self.result_queue.get_nowait()
             except queue.Empty:
                 pass
 
-            if current_results is not None:
-                for person in current_results:
-                    l, t, r, b = person["bbox"]
-                    global_id = person["global_id"]
-                    self.processor.annotate(frame, l, t, r, b, str(global_id))
-                self.processor.draw_person_count(frame, self.person_count)
+            for person in persistent_results:
+                l, t, r, b = person["bbox"]
+
+                label = str(person.get("global_id", "Person"))
+
+                self.processor.annotate(frame, l, t, r, b, label)
+
+            self.processor.draw_person_count(frame, self.person_count)
 
             self.output.write(frame)
 
@@ -173,10 +180,16 @@ class CameraProcessor:
 
             if frame is None:
                 break
+
+            frame_started = time.time()
+            self.logger.info(f"Frame {frame_count}: starting inference")
             yolo_start = time.time()
             detections = self.detector.detect(frame)
-            yolo_time = time.time() - yolo_start
-            self.logger.info(f"YOLO detection took {yolo_time:.3f} seconds.")
+            yolo_elapsed = time.time() - yolo_start
+            self.logger.info(
+                f"Frame {frame_count}: detection complete with {len(detections)} detections in {yolo_elapsed:.3f}s"
+            )
+            self.total_detection_time += yolo_elapsed
 
             self.person_count = len(detections)
             if self.config.panorama:
@@ -189,7 +202,7 @@ class CameraProcessor:
                 if not detections:
                     detections = []
 
-                tracked_results = self.tracker.update(
+                tracker_result = self.tracker.update(
                     frame,
                     detections,
                     self.reid_model,
@@ -197,6 +210,26 @@ class CameraProcessor:
                     self.config.detection_interval,
                     self.config.camera_id,
                 )
+                tracked_results = tracker_result.get("render_data", [])
+                tracking_elapsed = tracker_result.get("tracking_time", 0.0)
+                reid_elapsed = tracker_result.get("reid_time", 0.0)
+                self.total_tracking_time += tracking_elapsed
+                self.total_reid_time = (
+                    getattr(self, "total_reid_time", 0.0) + reid_elapsed
+                )
+                self.logger.info(
+                    f"Frame {frame_count}: tracking complete ({len(tracked_results)} tracked) in {tracking_elapsed:.3f}s"
+                )
+                self.logger.info(
+                    f"Frame {frame_count}: ReID complete in {reid_elapsed:.3f}s"
+                )
+
+            inference_elapsed = time.time() - frame_started
+            self.inference_count += 1
+            self.total_inference_time += inference_elapsed
+            self.logger.info(
+                f"Frame {frame_count}: total inference time {inference_elapsed:.3f}s"
+            )
 
             if self.result_queue.full():
                 try:
@@ -207,6 +240,17 @@ class CameraProcessor:
                 self.result_queue.put_nowait(tracked_results)
             except queue.Full:
                 pass
+
+        if self.inference_count > 0:
+            avg_inference = self.total_inference_time / self.inference_count
+            avg_detection = self.total_detection_time / self.inference_count
+            avg_tracking = self.total_tracking_time / self.inference_count
+            avg_reid = self.total_reid_time / self.inference_count
+            self.logger.info(
+                f"Inference summary: {self.inference_count} frames, avg total {avg_inference:.3f}s, "
+                f"avg detection {avg_detection:.3f}s, avg tracking {avg_tracking:.3f}s, "
+                f"avg ReID {avg_reid:.3f}s"
+            )
 
     def cleanup(self):
         self.stop_event.set()
