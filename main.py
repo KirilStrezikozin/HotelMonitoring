@@ -37,6 +37,11 @@ def main():
             stream_url="rtsp://localhost:8554/mystream",
             output_url="rtsp://localhost:8554/cam/reception",
         ),
+        # CameraConfig(
+        #     camera_id=5,
+        #     video_path="videos/trento-piazza-duomo.mp4",
+        #     output_url="rtsp://admin:tEsTgfhjkm1729@localhost:8554/cam/reception",
+        # ),
     ]
 
     print("--- Phase 1: Loading Models & Environments ---")
