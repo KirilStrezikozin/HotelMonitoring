@@ -47,7 +47,7 @@ class VideoOutput:
                 "-tune",
                 "zerolatency",
                 "-preset",
-                "superfast",
+                "ultrafast",
                 "-f",
                 "rtsp",
                 stream_url,
