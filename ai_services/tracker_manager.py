@@ -17,6 +17,7 @@ class TrackerManager:
             max_iou_distance=0.8,
             n_init=2,
             max_cosine_distance=0.2,
+            embedder=None,
         )
         self.track_to_global: dict[int, str] = {}
 
@@ -30,18 +31,43 @@ class TrackerManager:
         camera_id: str,
     ) -> dict:
         """
-        Update tracker and assign global IDs using ReID.
-        Returns a dict with render data and timing breakdown for tracking and ReID.
+        Update tracker with pre-computed batched ReID embeddings and assign global IDs.
         """
+        frame_h, frame_w = frame.shape[:2]
+
+        detection_crops = []
+        valid_detections = []
+
+        for det in detections:
+            bbox, conf, cl = det
+            x, y, w, h = map(int, bbox)
+            l, t, r, b = x, y, x + w, y + h
+            l, t = max(0, l), max(0, t)
+            r, b = min(frame_w, r), min(frame_h, b)
+
+            if r <= l or b <= t:
+                continue
+
+            detection_crops.append(frame[t:b, l:r])
+            valid_detections.append(det)
+
+        reid_start = time.time()
+        detection_embeddings = []
+        if detection_crops:
+            detection_embeddings = reid_model.extract_embeddings_batch(detection_crops)
+        reid_time = time.time() - reid_start
+
         tracking_start = time.time()
-        tracks = self.tracker.update_tracks(detections, frame=frame)
+
+        tracks = self.tracker.update_tracks(
+            valid_detections, frame=frame, embeds=detection_embeddings
+        )
         tracking_elapsed = time.time() - tracking_start
 
         used_gids: set[str] = set()
-        frame_h, frame_w = frame.shape[:2]
-
         render_data = []
-        reid_time = 0.0
+
+        is_interval_frame = frame_count % detection_interval == 0
 
         for track in tracks:
             if not track.is_confirmed() or track.time_since_update > 1:
@@ -57,7 +83,6 @@ class TrackerManager:
                 if r <= l or b <= t:
                     continue
 
-                crop = frame[t:b, l:r]
                 vertical = (r - l) / (b - t) > FrameProcessor.MAX_VERTICAL_RATIO
 
                 if (r - l) * (b - t) <= FrameProcessor.MIN_BOX_AREA or vertical:
@@ -66,25 +91,25 @@ class TrackerManager:
                 current_gid = self.track_to_global.get(local_id)
                 assigned_gid = current_gid
 
-                if frame_count % detection_interval == 0:
-                    reid_start = time.time()
-                    embedding = reid_model.extract_embedding(crop)
-                    assigned_gid = reid_model.assign_global_id(
-                        embedding,
-                        camera_id,
-                        current_gid,
-                        active_ids=used_gids,
-                    )
-                    reid_time += time.time() - reid_start
+                if is_interval_frame:
+                    if track.features:
+                        embedding = track.features[-1]
 
-                    if assigned_gid in used_gids:
-                        assigned_gid = reid_model._create_new_identity(
-                            embedding, camera_id
+                        assigned_gid = reid_model.assign_global_id(
+                            embedding,
+                            camera_id,
+                            current_gid,
+                            active_ids=used_gids,
                         )
 
-                    if assigned_gid:
-                        self.track_to_global[local_id] = assigned_gid
-                        used_gids.add(assigned_gid)
+                        if assigned_gid in used_gids:
+                            assigned_gid = reid_model._create_new_identity(
+                                embedding, camera_id
+                            )
+
+                        if assigned_gid:
+                            self.track_to_global[local_id] = assigned_gid
+                            used_gids.add(assigned_gid)
 
                 if assigned_gid:
                     render_data.append(

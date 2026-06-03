@@ -180,66 +180,71 @@ class CameraProcessor:
 
             if frame is None:
                 break
-
-            frame_started = time.time()
-            self.logger.info(f"Frame {frame_count}: starting inference")
-            yolo_start = time.time()
-            detections = self.detector.detect(frame)
-            yolo_elapsed = time.time() - yolo_start
-            self.logger.info(
-                f"Frame {frame_count}: detection complete with {len(detections)} detections in {yolo_elapsed:.3f}s"
-            )
-            self.total_detection_time += yolo_elapsed
-
-            self.person_count = len(detections)
-            if self.config.panorama:
-                tracked_results = []
-                for bbox, _, _ in detections:
-                    x, y, w, h = bbox
-                    l, t, r, b = x, y, x + w, y + h
-                    tracked_results.append({"bbox": (l, t, r, b), "global_id": ""})
-            else:
-                if not detections:
-                    detections = []
-
-                tracker_result = self.tracker.update(
-                    frame,
-                    detections,
-                    self.reid_model,
-                    frame_count,
-                    self.config.detection_interval,
-                    self.config.camera_id,
-                )
-                tracked_results = tracker_result.get("render_data", [])
-                tracking_elapsed = tracker_result.get("tracking_time", 0.0)
-                reid_elapsed = tracker_result.get("reid_time", 0.0)
-                self.total_tracking_time += tracking_elapsed
-                self.total_reid_time = (
-                    getattr(self, "total_reid_time", 0.0) + reid_elapsed
-                )
-                self.logger.info(
-                    f"Frame {frame_count}: tracking complete ({len(tracked_results)} tracked) in {tracking_elapsed:.3f}s"
-                )
-                self.logger.info(
-                    f"Frame {frame_count}: ReID complete in {reid_elapsed:.3f}s"
-                )
-
-            inference_elapsed = time.time() - frame_started
-            self.inference_count += 1
-            self.total_inference_time += inference_elapsed
-            self.logger.info(
-                f"Frame {frame_count}: total inference time {inference_elapsed:.3f}s"
-            )
-
-            if self.result_queue.full():
-                try:
-                    self.result_queue.get_nowait()
-                except queue.Empty:
-                    pass
             try:
-                self.result_queue.put_nowait(tracked_results)
-            except queue.Full:
-                pass
+                frame_started = time.time()
+                self.logger.info(f"Frame {frame_count}: starting inference")
+                yolo_start = time.time()
+                detections = self.detector.detect(frame)
+                yolo_elapsed = time.time() - yolo_start
+                self.logger.info(
+                    f"Frame {frame_count}: detection complete with {len(detections)} detections in {yolo_elapsed:.3f}s"
+                )
+                self.total_detection_time += yolo_elapsed
+
+                self.person_count = len(detections)
+                if self.config.panorama:
+                    tracked_results = []
+                    for bbox, _, _ in detections:
+                        x, y, w, h = bbox
+                        l, t, r, b = x, y, x + w, y + h
+                        tracked_results.append({"bbox": (l, t, r, b), "global_id": ""})
+                else:
+                    if not detections:
+                        detections = []
+
+                    tracker_result = self.tracker.update(
+                        frame,
+                        detections,
+                        self.reid_model,
+                        frame_count,
+                        self.config.detection_interval,
+                        self.config.camera_id,
+                    )
+                    tracked_results = tracker_result.get("render_data", [])
+                    tracking_elapsed = tracker_result.get("tracking_time", 0.0)
+                    reid_elapsed = tracker_result.get("reid_time", 0.0)
+                    self.total_tracking_time += tracking_elapsed
+                    self.total_reid_time = (
+                        getattr(self, "total_reid_time", 0.0) + reid_elapsed
+                    )
+                    self.logger.info(
+                        f"Frame {frame_count}: tracking complete ({len(tracked_results)} tracked) in {tracking_elapsed:.3f}s"
+                    )
+                    self.logger.info(
+                        f"Frame {frame_count}: ReID complete in {reid_elapsed:.3f}s"
+                    )
+
+                inference_elapsed = time.time() - frame_started
+                self.inference_count += 1
+                self.total_inference_time += inference_elapsed
+                self.logger.info(
+                    f"Frame {frame_count}: total inference time {inference_elapsed:.3f}s"
+                )
+
+                if self.result_queue.full():
+                    try:
+                        self.result_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                try:
+                    self.result_queue.put_nowait(tracked_results)
+                except queue.Full:
+                    pass
+            except Exception as e:
+                self.logger.error(
+                    f"Inference crashed on Frame {frame_count}: {e}", exc_info=True
+                )
+                continue
 
         if self.inference_count > 0:
             avg_inference = self.total_inference_time / self.inference_count
