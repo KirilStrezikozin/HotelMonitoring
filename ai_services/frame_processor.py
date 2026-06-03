@@ -25,22 +25,32 @@ class FrameProcessor:
         global_id: str,
         is_staff: bool = False,
     ):
-        """Draw bounding box and label. Staff get a distinct colour and label."""
-        color = (
-            (0, 200, 255) if is_staff else (0, 220, 0)
-        )  # amber for staff, green for guests
-        label = global_id if is_staff else f"ID {global_id[:3]}"
-
-        cv2.rectangle(frame, (l, t), (r, b), color, 1)  # thickness 2 → 1
-        cv2.putText(
-            frame,
-            label,
-            (l, t - 5),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.4,  # font scale 0.6 → 0.4
-            color,
-            1,  # thickness 2 → 1
-        )
+        """Draw annotation. Staff: box + name. Clients: text only, no box."""
+        if is_staff:
+            color = (0, 200, 255)  # amber
+            cv2.rectangle(frame, (l, t), (r, b), color, 1)
+            cv2.putText(
+                frame,
+                global_id,
+                (l, t - 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.4,
+                color,
+                1,
+            )
+        else:
+            # Client — only the word "client" centered above the detection, no box
+            cx = (l + r) // 2
+            (tw, _), _ = cv2.getTextSize("client", cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+            cv2.putText(
+                frame,
+                "client",
+                (cx - tw // 2, t - 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.4,
+                (0, 220, 0),
+                1,
+            )
 
     @staticmethod
     def draw_person_count(frame: np.ndarray, count: int):

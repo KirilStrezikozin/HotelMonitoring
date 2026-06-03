@@ -28,7 +28,7 @@ class MultiCameraTracker:
         self.reid_model = ReIDModel(reid_model_path, db=self.analytics_db)
 
         # --- YOLO: export to CoreML (Apple Silicon) or OpenVINO (Linux/x86) ---
-        base_model_name = "models/yolo26n"
+        base_model_name = "models/best"
         pytorch_model_path = f"{base_model_name}.pt"
 
         is_apple_silicon = (

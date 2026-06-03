@@ -15,10 +15,10 @@ class TrackerManager:
     def __init__(self):
         config = TrackingConfig()
         self.tracker = DeepSort(
-            max_age=config.max_age,
-            max_iou_distance=0.5,
-            n_init=5,
-            max_cosine_distance=0.2,
+            max_age=config.max_age,  # 60 — трек живе довше при зникненні
+            max_iou_distance=0.7,  # 0.5→0.7 — гнучкіше зіставлення при русі
+            n_init=3,  # 5→3 — трек підтверджується вже на 3-му кадрі
+            max_cosine_distance=0.4,  # 0.2→0.3 — м'якше appearance matching
         )
 
     def update(self, frame: np.ndarray, detections: list) -> list:

@@ -120,7 +120,11 @@ class ReIDModel:
         logger=None,
     ) -> str:
         self._cleanup_stale_identities()
-        candidates = self._find_best_match(embedding, camera_id, current_id)
+        # Tracks re-appearing after a drop (current_id=None) get a looser threshold
+        # so they can match their previous identity even with slight appearance change.
+        candidates = self._find_best_match(
+            embedding, camera_id, current_id, loose=current_id is None
+        )
 
         for best_gid, dist in candidates:
             # Same track as before — keep the ID
@@ -180,16 +184,15 @@ class ReIDModel:
     # ------------------------------------------------------------------
 
     def _find_best_match(
-        self, embedding: np.ndarray, camera_id: int, current_id: str
-    ) -> str | None:
-        # if camera_id == 2:
-        #     threshold = self.threshold * 1.1
-        # else:
-        #     threshold = self.threshold
-        threshold = self.threshold
-        # best_gid = None
-        # this_id_gid = None
-        # best_distance = float("inf")
+        self,
+        embedding: np.ndarray,
+        camera_id: int,
+        current_id: str,
+        loose: bool = False,
+    ) -> list[tuple[str, float]]:
+        # loose=True when track has no prior ID (re-appeared after drop):
+        # use 1.3× threshold so slight appearance changes still match.
+        base = self.threshold * 1.3 if loose else self.threshold
         now = time.time()
         candidates: list[tuple[str, float]] = []
 
@@ -204,10 +207,10 @@ class ReIDModel:
                 # Person was last seen on a different camera less than 1s ago
                 if (now - last_entry.timestamp) < 1.0:
                     continue
-                threshold = self.threshold
+                threshold = base
             else:
                 # Same camera → tighter threshold
-                threshold = self.threshold * 0.9  # local variable, not mutating self
+                threshold = base * 0.9
 
             if distance < threshold:
                 candidates.append((gid, distance))
@@ -228,12 +231,15 @@ class ReIDModel:
     def _update_embedding_buffer(
         self, gid: str, embedding: np.ndarray, camera_id: int
     ) -> None:
+        # Staff embeddings are fixed at registration — never overwrite them
+        # so that live video noise cannot corrupt the reference buffer.
+        if gid in self.staff_ids:
+            return
+
         ts = time.time()
         entry = EmbeddingEntry(embedding=embedding, timestamp=ts, camera_id=camera_id)
         buf = self.embedding_db[gid]
-        if len(buf) >= self.buffer_size:
-            buf.popleft()
-        buf.append(entry)
+        buf.append(entry)  # deque(maxlen=N) auto-removes oldest on overflow
         # Invalidate cached mean
         self._mean_cache.pop(gid, None)
         # Persist to DB and trim old rows
@@ -321,14 +327,20 @@ class ReIDTracker:
             min_box_area:       minimum crop area to process
             logger:             optional logger
         """
-        if not is_detection_frame:
-            return
-
         frame_h, frame_w = frame.shape[:2]
-        used_gids: set[str] = set()
+        used_gids: set[str] = set(self.track_to_global.values())
 
         for track in tracks:
             local_id = track.track_id
+            current_gid = self.track_to_global.get(local_id)
+
+            # Run ReID if:
+            #   a) it's a regular detection frame (periodic update for all tracks), OR
+            #   b) this track has no global_id yet — run every frame so a re-appeared
+            #      person gets re-identified immediately instead of waiting N frames.
+            if not is_detection_frame and current_gid is not None:
+                continue
+
             if local_id in skip_ids:
                 continue
 
@@ -342,7 +354,6 @@ class ReIDTracker:
                 continue
 
             crop = frame[t:b, l:r]
-            current_gid = self.track_to_global.get(local_id)
 
             try:
                 embedding = self.model.extract_embedding(crop)

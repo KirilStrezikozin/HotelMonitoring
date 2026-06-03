@@ -162,11 +162,11 @@ class CameraProcessor:
 
         # Clean copy used for body crops — made ONCE before any cv2.rectangle/putText
         # so that annotations from other tracks never bleed into saved images.
-        save_crops_this_frame = (
-            is_detection_frame
-            and self.frame_count % (self.config.detection_interval * 3) == 0
-        )
-        clean_frame = frame.copy() if save_crops_this_frame else None
+        # save_crops_this_frame = (
+        #     is_detection_frame
+        #     and self.frame_count % (self.config.detection_interval * 3) == 0
+        # )
+        # clean_frame = frame.copy() if save_crops_this_frame else None
 
         if is_detection_frame:
             self._cleanup_dead_tracks()
@@ -260,10 +260,10 @@ class CameraProcessor:
                     timestamp = self.get_current_timestamp()
 
                     # Save body crop from the pre-annotation clean copy
-                    if clean_frame is not None:
-                        crop = clean_frame[t:b, l:r]
-                        if crop.size > 0:
-                            self.save_body_crop(assigned_gid, crop, timestamp)
+                    # if clean_frame is not None:
+                    #     crop = clean_frame[t:b, l:r]
+                    #     if crop.size > 0:
+                    #         self.save_body_crop(assigned_gid, crop, timestamp)
 
                     FrameProcessor.annotate(
                         frame,

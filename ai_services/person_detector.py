@@ -30,9 +30,11 @@ class PersonDetector:
         """
         results = self.detector.predict(
             frame,
-            classes=[0],  # person only
-            conf=tracking_config.conf_threshold,  # 0.15 — low enough for yolo26n
-            device=device,  # mps / cuda / cpu
+            classes=[1],  # person only
+            conf=tracking_config.conf_threshold,
+            imgsz=tracking_config.yolo_imgsz,
+            iou=0.3,  # агресивно прибирає дублікати ще всередині YOLO
+            device=device,
             verbose=False,
         )
 
@@ -52,8 +54,8 @@ class PersonDetector:
             if w * h > self.min_box_area and not vertical:
                 detections.append(([x1, y1, w, h], conf, "person"))
 
-        # iou_threshold=0.45 — aggressively remove overlapping boxes
-        return self._nms(detections, iou_threshold=0.45)
+        # iou_threshold=0.35 — другий прохід NMS для відео з малою роздільністю
+        return self._nms(detections, iou_threshold=0.35)
 
     # ------------------------------------------------------------------
     # NMS — extra deduplication pass on top of YOLO's built-in NMS
