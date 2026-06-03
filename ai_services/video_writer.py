@@ -55,7 +55,7 @@ class VideoOutput:
 
     def write(self, frame: np.ndarray):
         if self.stream:
-            self.writer.stdin.write(frame.tobytes())
+            self.writer.stdin.write(frame)
         else:
             self.writer.write(frame)
 
