@@ -138,20 +138,23 @@ class TrackerManager:
         frame_count: int,
         detection_interval: int,
         camera_id: str,
-    ) -> list[dict]:
+    ) -> dict:
         """
         Update tracker using dummy embeddings to force math-only IoU tracking.
         Returns a list of dictionaries containing bbox and local track id.
         """
+
         frame_h, frame_w = frame.shape[:2]
 
         # Create non-zero dummy embeddings to prevent division-by-zero crashes
         dummy_embeds = np.ones((len(detections), 128)) if detections else None
 
         # Feed the dummy embeddings so the tracker relies solely on IoU and Kalman filters
+        tracking_start = time.time()
         tracks = self.tracker.update_tracks(
             detections, frame=frame, embeds=dummy_embeds
         )
+        tracking_elapsed = time.time() - tracking_start
 
         render_data = []
 
@@ -183,7 +186,11 @@ class TrackerManager:
                 print(f"Tracking error: {e}")
                 continue
 
-        return render_data
+        return {
+            "render_data": render_data,
+            "tracking_time": tracking_elapsed,
+            "reid_time": 0,
+        }
 
     def update_no_tracking(
         self,
@@ -193,7 +200,7 @@ class TrackerManager:
         frame_count: int,
         detection_interval: int,
         camera_id: str,
-    ) -> list[dict]:
+    ) -> dict:
         """
         Processes raw detections directly into render data without tracking.
         Returns a list of dictionaries containing bbox and a placeholder global_id.
@@ -229,4 +236,8 @@ class TrackerManager:
                 print(f"Tracking error: {e}")
                 continue
 
-        return render_data
+        return {
+            "render_data": render_data,
+            "tracking_time": 0,
+            "reid_time": 0,
+        }
