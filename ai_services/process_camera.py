@@ -56,9 +56,12 @@ class CameraProcessor:
 
         self.stop_event = threading.Event()
 
-        self.inference_queue = queue.Queue(maxsize=2)
-        self.result_queue = queue.Queue(maxsize=2)
         self.person_count = 0
+
+        self.data_lock = threading.Lock()
+        self.inference_event = threading.Event()
+        self.latest_inference_frame = None
+        self.latest_results = None
 
         self.threads = []
 
@@ -123,10 +126,9 @@ class CameraProcessor:
             if not self.source.grab() or self.frame_count >= self.max_frames:
                 self.logger.info("Finished video file or RTSP stream disconnected.")
                 self.stop_event.set()
-                try:
-                    self.inference_queue.put_nowait((None, None))
-                except queue.Full:
-                    pass
+                with self.data_lock:
+                    self.latest_inference_frame = (None, None)
+                self.inference_event.set()
                 break
 
             self.frame_count += 1
@@ -137,21 +139,13 @@ class CameraProcessor:
             frame = self.processor.preprocess(frame)
 
             if self.frame_count % self.config.detection_interval == 0:
-                if self.inference_queue.full():
-                    try:
-                        self.inference_queue.get_nowait()
-                    except queue.Empty:
-                        pass
-                try:
-                    self.inference_queue.put_nowait((self.frame_count, frame.copy()))
-                except queue.Full:
-                    pass
+                with self.data_lock:
+                    self.latest_inference_frame = (self.frame_count, frame.copy())
+                self.inference_event.set()
 
-            try:
-                while not self.result_queue.empty():
-                    persistent_results = self.result_queue.get_nowait()
-            except queue.Empty:
-                pass
+            with self.data_lock:
+                if self.latest_results is not None:
+                    persistent_results = self.latest_results
 
             for person in persistent_results:
                 l, t, r, b = person["bbox"]
@@ -173,10 +167,18 @@ class CameraProcessor:
     def _inference_thread(self):
         """Thread 2: Receives frames, runs detection + tracking + ReID, and sends results back."""
         while not self.stop_event.is_set():
-            try:
-                frame_count, frame = self.inference_queue.get(timeout=1)
-            except queue.Empty:
+            if not self.inference_event.wait(timeout=1.0):
                 continue
+
+            self.inference_event.clear()
+
+            with self.data_lock:
+                inference_data = self.latest_inference_frame
+
+            if inference_data is None or inference_data[0] is None:
+                break
+
+            frame_count, frame = inference_data
 
             if frame is None:
                 break
@@ -231,15 +233,9 @@ class CameraProcessor:
                     f"Frame {frame_count}: total inference time {inference_elapsed:.3f}s"
                 )
 
-                if self.result_queue.full():
-                    try:
-                        self.result_queue.get_nowait()
-                    except queue.Empty:
-                        pass
-                try:
-                    self.result_queue.put_nowait(tracked_results)
-                except queue.Full:
-                    pass
+                with self.data_lock:
+                    self.latest_results = tracked_results
+
             except Exception as e:
                 self.logger.error(
                     f"Inference crashed on Frame {frame_count}: {e}", exc_info=True
@@ -259,6 +255,7 @@ class CameraProcessor:
 
     def cleanup(self):
         self.stop_event.set()
+        self.inference_event.set()
         for t in self.threads:
             if t.is_alive():
                 t.join(timeout=2)
