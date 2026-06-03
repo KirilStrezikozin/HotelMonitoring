@@ -41,8 +41,11 @@ class CameraProcessor:
         )
 
         output_path = (
-            self._generate_output_filename() if config_camera.video_path else None
+            self._generate_output_filename()
+            if config_camera.video_path and not config_camera.output_url
+            else None
         )
+
         self.output = VideoOutput(
             width=self.source.width,
             height=self.source.height,
