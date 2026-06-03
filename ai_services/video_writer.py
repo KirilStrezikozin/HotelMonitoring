@@ -7,6 +7,8 @@ import numpy as np
 # Automatically use Apple Silicon/Mac hardware encoding if available, otherwise fallback to libx264
 use_libx264 = platform.system() != "Darwin"
 
+use_tcp = False
+
 
 class VideoOutput:
     """Handles writing frames to a file or RTSP stream."""
@@ -48,10 +50,21 @@ class VideoOutput:
                 "zerolatency",
                 "-preset",
                 "ultrafast",
+            ]
+
+            if use_tcp:
+                ffmpeg_cmd += [
+                    "-rtsp_transport",
+                    "tcp",
+                ]
+
+            ffmpeg_cmd += [
                 "-f",
                 "rtsp",
-                stream_url,
             ]
+
+            ffmpeg_cmd.append(stream_url)
+
             self.writer = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
             self.stream = True
         else:
