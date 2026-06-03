@@ -1,7 +1,11 @@
 import subprocess
+import platform
 
 import cv2
 import numpy as np
+
+# Automatically use Apple Silicon/Mac hardware encoding if available, otherwise fallback to libx264
+use_libx264 = platform.system() != "Darwin"
 
 
 class VideoOutput:
@@ -37,7 +41,7 @@ class VideoOutput:
                 "-i",
                 "-",
                 "-c:v",
-                "h264_videotoolbox",
+                "libx264" if use_libx264 else "h264_videotoolbox",
                 "-b:v",
                 "4000k",
                 "-tune",
