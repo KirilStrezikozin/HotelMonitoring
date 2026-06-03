@@ -18,6 +18,11 @@ class PersonDetector:
 
     CONF_THRESHOLD = 0.3
 
+    TOP_CROP = 0.0
+    BOTTOM_CROP = 0.0
+    LEFT_CROP = 0.0
+    RIGHT_CROP = 0.0
+
     def __init__(self, detector: YOLO):
         self.detector = detector
 
@@ -28,7 +33,16 @@ class PersonDetector:
         Returns:
             List of tuples: ([x, y, w, h], confidence, "person")
         """
-        results = self.detector(frame, imgsz=1088, iou=0.6)
+        h_orig, w_orig = frame.shape[:2]
+
+        y_start = int(h_orig * self.TOP_CROP)
+        y_end = int(h_orig * (1.0 - self.BOTTOM_CROP))
+        x_start = int(w_orig * self.LEFT_CROP)
+        x_end = int(w_orig * (1.0 - self.RIGHT_CROP))
+
+        roi_frame = frame[y_start:y_end, x_start:x_end]
+
+        results = self.detector(roi_frame, imgsz=1088, iou=0.6)
         detections = []
 
         for box, cls, conf in zip(
@@ -38,6 +52,13 @@ class PersonDetector:
                 continue
 
             x1, y1, x2, y2 = map(int, box)
+
+            # Translate coordinates back to the full 1080p frame space
+            x1 += x_start
+            x2 += x_start
+            y1 += y_start
+            y2 += y_start
+
             w, h = x2 - x1, y2 - y1
             if (
                 w * h > FrameProcessor.MIN_BOX_AREA
