@@ -1,4 +1,5 @@
 import subprocess
+import sys
 import platform
 
 import cv2
@@ -65,7 +66,9 @@ class VideoOutput:
 
             ffmpeg_cmd.append(stream_url)
 
-            self.writer = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
+            self.writer = subprocess.Popen(
+                ffmpeg_cmd, stdin=subprocess.PIPE, stderr=sys.stderr
+            )
             self.stream = True
         else:
             raise ValueError("Either output_path or stream_url must be provided.")
