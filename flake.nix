@@ -26,15 +26,6 @@
         inputsForScripts = [
           pkgs.jq
           pkgs.curl
-
-          # Avoid runtime errors in numpy-dependent scripts when running them
-          # in the host env by using Nix's native package management for Python.
-          # <https://gist.github.com/GuillaumeDesforges/7d66cf0f63038724acf06f17331c9280>
-          (pkgs.python312.withPackages (
-            python-pkgs: with python-pkgs; [
-              numpy
-            ]
-          ))
         ];
 
         inputsTooling = [
@@ -58,10 +49,16 @@
       {
         devShells.default = pkgs.mkShell {
           buildInputs = [
+            pkgs.libGL
+            pkgs.glib
           ]
           ++ inputsForScripts
           ++ inputsTooling
           ++ inputsLsp;
+
+          shellHook = ''
+            export LD_LIBRARY_PATH="${pkgs.libGL}/lib:${pkgs.glib.out}/lib:$LD_LIBRARY_PATH"
+          '';
         };
 
         # For compatibility with older versions of the `nix` binary.
