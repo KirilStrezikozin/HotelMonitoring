@@ -13,6 +13,9 @@ class TrackerManager:
         tracking_config = TrackingConfig()
         self.tracker = DeepSort(
             # max_age=tracking_config.max_age,
+            # max_iou_distance=0.8,
+            # n_init=2,
+            # max_cosine_distance=0.2,
             max_age=5,
             max_iou_distance=0.5,
             n_init=1,
@@ -30,27 +33,18 @@ class TrackerManager:
         camera_id: str,
     ) -> list[dict]:
         """
-        Update tracker using dummy embeddings to force math-only IoU tracking.
-        Returns a list of dictionaries containing bbox and local track id.
+        Update tracker and assign global IDs using ReID.
+        Returns a list of dictionaries containing bbox and global_id for drawing.
         """
+        tracks = self.tracker.update_tracks(detections, frame=frame)
+        used_gids: set[str] = set()
+
         frame_h, frame_w = frame.shape[:2]
-
-        # Create non-zero dummy embeddings to prevent division-by-zero crashes
-        dummy_embeds = np.ones((len(detections), 128)) if detections else None
-
-        # Feed the dummy embeddings so the tracker relies solely on IoU and Kalman filters
-        tracks = self.tracker.update_tracks(
-            detections, frame=frame, embeds=dummy_embeds
-        )
 
         render_data = []
 
         for track in tracks:
             try:
-                # Only render tracks that the Kalman filter has confirmed
-                if not track.is_confirmed():
-                    continue
-
                 local_id = track.track_id
                 l, t, r, b = map(int, track.to_ltrb())
 
@@ -61,13 +55,36 @@ class TrackerManager:
                 if r <= l or b <= t:
                     continue
 
+                crop = frame[t:b, l:r]
                 vertical = (r - l) / (b - t) > FrameProcessor.MAX_VERTICAL_RATIO
 
                 if (r - l) * (b - t) <= FrameProcessor.MIN_BOX_AREA or vertical:
                     continue
 
-                # Pass the spatial tracker's local ID to the renderer
-                render_data.append({"bbox": (l, t, r, b), "global_id": str(local_id)})
+                current_gid = self.track_to_global.get(local_id)
+                assigned_gid = current_gid
+
+                if frame_count % detection_interval == 0:
+                    embedding = reid_model.extract_embedding(crop)
+                    assigned_gid = reid_model.assign_global_id(
+                        embedding,
+                        camera_id,
+                        current_gid,
+                        active_ids=used_gids,
+                    )
+                    if assigned_gid in used_gids:
+                        assigned_gid = reid_model._create_new_identity(
+                            embedding, camera_id
+                        )
+
+                    if assigned_gid:
+                        self.track_to_global[local_id] = assigned_gid
+                        used_gids.add(assigned_gid)
+
+                if assigned_gid:
+                    render_data.append(
+                        {"bbox": (l, t, r, b), "global_id": assigned_gid}
+                    )
 
             except Exception as e:
                 print(f"Tracking error: {e}")
