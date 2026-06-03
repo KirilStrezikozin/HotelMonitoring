@@ -1,3 +1,5 @@
+import sys
+from os import sysconf_names
 import subprocess
 
 import cv2
@@ -34,28 +36,42 @@ class VideoOutput:
                 f"{width}x{height}",
                 "-r",
                 str(int(fps)),
+                #
+                # "-i",
+                # "-",
+                # "-c:v",
+                # "h264_videotoolbox",
+                # "-b:v",
+                #
                 "-i",
                 "-",
                 "-c:v",
-                "h264_videotoolbox",
+                "libx264",
                 "-b:v",
+                #
                 "4000k",
                 "-tune",
                 "zerolatency",
                 "-preset",
-                "superfast",
+                "ultrafast",
+                #
+                "-rtsp_transport",
+                "tcp",
+                #
                 "-f",
                 "rtsp",
                 stream_url,
             ]
-            self.writer = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
+            self.writer = subprocess.Popen(
+                ffmpeg_cmd, stdin=subprocess.PIPE, stderr=sys.stderr
+            )
             self.stream = True
         else:
             raise ValueError("Either output_path or stream_url must be provided.")
 
     def write(self, frame: np.ndarray):
         if self.stream:
-            self.writer.stdin.write(frame.tobytes())
+            self.writer.stdin.write(frame)
         else:
             self.writer.write(frame)
 

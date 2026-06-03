@@ -31,8 +31,18 @@ def main():
         # CameraConfig(camera_id=1, video_path='15546948_1080_1920_50fps.mp4'),
         # CameraConfig(camera_id=2, video_path="VIRAT_S_050201_05_000890_000944.mp4"),
         # CameraConfig(camera_id=3, video_path="VIRAT_S_010204_05_000856_000890.mp4"),
-        CameraConfig(camera_id=3, video_path="videos/yard_test.mp4"),
-        # CameraConfig(camera_id=4, stream_url="rtsp://admin:tEsTgfhjkm1729@192.168.12.20:554/cam/realmonitor?channel=1&subtype=1", output_url="rtsp://mediamtx:8554/cam/reception"),
+        # CameraConfig(camera_id=3, video_path="videos/yard_test.mp4"),
+        # CameraConfig(
+        #     camera_id=4,
+        #     stream_url="rtsp://admin:tEsTgfhjkm1729@192.168.12.20:554/cam/realmonitor?channel=1&subtype=1",
+        #     output_url="rtsp://mediamtx:8554/cam/reception",
+        # ),
+        # CameraConfig(camera_id=5, video_path="videos/trento-piazza-duomo.mp4"),
+        CameraConfig(
+            camera_id=6,
+            video_path="videos/trento-piazza-duomo.mp4",
+            output_url="rtsp://admin:tEsTgfhjkm1729@localhost:8554/cam/reception",
+        ),
     ]
 
     print("--- Phase 1: Loading Models & Environments ---")
