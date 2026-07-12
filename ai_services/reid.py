@@ -82,43 +82,57 @@ class ReIDModel:
         current_id: str,
         active_ids: set[str],
     ) -> str:
+        """
+        Assign a global ID to an embedding, prioritizing ID persistence.
+        
+        Strategy:
+        1. If current_id exists and is a strong match, reuse it
+        2. Otherwise, find best matching ID from database
+        3. If no match found, create new identity
+        """
         candidates = self._find_best_match(embedding, camera_id, current_id)
 
+        # Strategy 1: If we have a current_id and it's in the candidates, prefer it
+        if current_id is not None:
+            for best_gid, dist in candidates:
+                if best_gid == current_id:
+                    self._update_embedding_buffer(best_gid, embedding, camera_id)
+                    return best_gid
+
+        # Strategy 2: Use the best matching ID if not already active in this frame
         for best_gid, dist in candidates:
-            if current_id == best_gid:
-                self._update_embedding_buffer(best_gid, embedding, camera_id)
-                return best_gid
             if best_gid not in active_ids:
                 self._update_embedding_buffer(best_gid, embedding, camera_id)
                 return best_gid
 
+        # Strategy 3: No match found, create new identity
         new_id = self._create_new_identity(embedding, camera_id)
         return new_id
 
     def _find_best_match(
         self, embedding: np.ndarray, camera_id: int, current_id: str
     ) -> list[tuple[str, float]]:
+        """Find best matching identities for an embedding.
+        
+        Returns a sorted list of (gid, distance) tuples, sorted by distance (closest first).
+        If current_id is valid and matches, it will be included in candidates.
+        """
         threshold = self.threshold
-        now = time.time()
         candidates: list[tuple[str, float]] = []
 
+        # Search all known identities for similarity matches
         for gid, embedding_buffer in self.embedding_db.items():
             avg_embedding = np.mean([e.embedding for e in embedding_buffer], axis=0)
             distance = cosine(avg_embedding, embedding)
-            last_entry = embedding_buffer[-1]
-
-            if last_entry.camera_id != camera_id:
-                time_diff = now - last_entry.timestamp
-                if time_diff < 1.0:
-                    continue
-            else:
-                threshold = self.threshold * 0.9
 
             if distance < threshold:
                 candidates.append((gid, distance))
 
         candidates.sort(key=lambda x: x[1])
-        if not candidates and current_id in self.embedding_db:
+        
+        # Fallback: If no candidates but current_id is valid and in database,
+        # add it as a fallback even if it's below threshold (ID persistence)
+        if not candidates and current_id is not None and current_id in self.embedding_db:
             avg_emb = np.mean(
                 [e.embedding for e in self.embedding_db[current_id]], axis=0
             )

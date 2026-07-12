@@ -24,6 +24,8 @@ class TrackerManager:
             # max_cosine_distance=0.2,
         )
         self.track_to_global: dict[int, str] = {}
+        # Track which global IDs are actively being used (for collision detection)
+        self.active_global_ids: set[str] = set()
 
     def update(
         self,
@@ -32,7 +34,7 @@ class TrackerManager:
         reid_model: ReIDModel,
         frame_count: int,
         detection_interval: int,
-        camera_id: str,
+        camera_id: int,
     ) -> dict:
         """
         Update tracker with pre-computed batched ReID embeddings and assign global IDs.
@@ -68,7 +70,16 @@ class TrackerManager:
         )
         tracking_elapsed = time.time() - tracking_start
 
-        used_gids: set[str] = set()
+        # Rebuild active_global_ids based on current confirmed tracks
+        # This represents all IDs actively being tracked right now
+        self.active_global_ids.clear()
+        for track in tracks:
+            if track.is_confirmed() and track.time_since_update <= 1:
+                local_id = track.track_id
+                if local_id in self.track_to_global:
+                    self.active_global_ids.add(self.track_to_global[local_id])
+
+        used_gids_this_frame: set[str] = set()
         render_data = []
 
         is_interval_frame = frame_count % detection_interval == 0
@@ -99,21 +110,23 @@ class TrackerManager:
                     if track.features:
                         embedding = track.features[-1]
 
+                        # Pass BOTH: active_global_ids (persistent) and used_gids_this_frame (frame-level)
                         assigned_gid = reid_model.assign_global_id(
                             embedding,
                             camera_id,
                             current_gid,
-                            active_ids=used_gids,
+                            active_ids=used_gids_this_frame,
                         )
 
-                        if assigned_gid in used_gids:
+                        # Double-check: if collision detected, create new identity
+                        if assigned_gid in used_gids_this_frame:
                             assigned_gid = reid_model._create_new_identity(
                                 embedding, camera_id
                             )
 
                         if assigned_gid:
                             self.track_to_global[local_id] = assigned_gid
-                            used_gids.add(assigned_gid)
+                            used_gids_this_frame.add(assigned_gid)
 
                 if assigned_gid:
                     render_data.append(
@@ -137,7 +150,7 @@ class TrackerManager:
         reid_model: ReIDModel,
         frame_count: int,
         detection_interval: int,
-        camera_id: str,
+        camera_id: int,
     ) -> dict:
         """
         Update tracker using dummy embeddings to force math-only IoU tracking.
@@ -199,7 +212,7 @@ class TrackerManager:
         reid_model: ReIDModel,
         frame_count: int,
         detection_interval: int,
-        camera_id: str,
+        camera_id: int,
     ) -> dict:
         """
         Processes raw detections directly into render data without tracking.
